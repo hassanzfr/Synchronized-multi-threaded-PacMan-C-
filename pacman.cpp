@@ -164,6 +164,122 @@ void* gameEngine(void* arg) {
 
     return nullptr;
 }
+void* uIThread(void* arg) {
+    sf::Font font;
+    if (!font.loadFromFile("emulogic.ttf")) {
+        std::cerr << "Could not load font!\n";
+        return nullptr;
+    }
+
+    sf::Text scoreText;
+    scoreText.setFont(font);
+    scoreText.setCharacterSize(14);
+    scoreText.setFillColor(sf::Color::White);
+    scoreText.setPosition(20, 410);
+
+    sf::Text livesText;
+    livesText.setFont(font);
+    livesText.setCharacterSize(14);
+    livesText.setFillColor(sf::Color::White);
+    livesText.setPosition(20, 440);
+
+    sf::Text boostedGhostsText; 
+    boostedGhostsText.setFont(font);
+    boostedGhostsText.setCharacterSize(14);
+    boostedGhostsText.setFillColor(sf::Color::White);
+    boostedGhostsText.setPosition(230, 410); 
+
+    while (true) {
+        pthread_mutex_lock(&renderDataMutex);
+        scoreText.setString("Score: " + std::to_string(score));
+        renderData.scoreText = scoreText;
+
+        livesText.setString("Lives: " + std::to_string(lives));
+        renderData.livesText = livesText;
+
+        std::string boostedGhosts;
+        for (int i = 0; i < NUM_GHOSTS; ++i) {
+            if (ghosts[i].hasSpeedBoost) {
+                boostedGhosts += ghosts[i].name;
+                boostedGhosts += " ";
+            }
+        }
+        boostedGhostsText.setString("Boosted: " + boostedGhosts);
+        renderData.boostedGhostsText = boostedGhostsText;
+        pthread_mutex_unlock(&renderDataMutex);
+
+        usleep(100000);
+    }
+    return nullptr;
+}
+
+void* ghostController(void* arg) {
+    int id = *((int*)arg);
+    sf::Clock ghostClock;
+
+    while (true) {
+        if (ghosts[id].y == 10) {
+            std::cout << "Ghost " << ghosts[id].name << " is waiting for a key and permit" << std::endl;
+            sem_wait(&keySemaphore);
+            sem_wait(&permitSemaphore);
+
+            std::cout << "Ghost " << ghosts[id].name << " acquired a key and permit" << std::endl;
+            sem_wait(&ghostGate);
+
+            ghosts[id].y = GHOST_GATE_Y;
+            std::cout << "Ghost " << ghosts[id].name << " passed through the gate" << std::endl;
+
+            sem_post(&ghostGate);
+            sem_post(&keySemaphore);
+            sem_post(&permitSemaphore);
+        }
+
+        if (ghostClock.getElapsedTime().asMilliseconds() >= (ghosts[id].hasSpeedBoost ? 100 : 200)) {
+            pthread_mutex_lock(&gameBoardMutex);
+
+            int newX = ghosts[id].x + ghosts[id].dx;
+            int newY = ghosts[id].y + ghosts[id].dy;
+
+            if (gameBoard[newY][newX] == 1 || rand() % 5 == 0) {
+                int direction = rand() % 4;
+                switch (direction) {
+                    case 0: ghosts[id].dx = -1; ghosts[id].dy = 0; break;
+                    case 1: ghosts[id].dx = 1; ghosts[id].dy = 0; break;
+                    case 2: ghosts[id].dx = 0; ghosts[id].dy = -1; break;
+                    case 3: ghosts[id].dx = 0; ghosts[id].dy = 1; break;
+                }
+            }
+
+            newX = ghosts[id].x + ghosts[id].dx;
+            newY = ghosts[id].y + ghosts[id].dy;
+
+            if (gameBoard[newY][newX] != 1) {
+                ghosts[id].x = newX;
+                ghosts[id].y = newY;
+            }
+
+            pthread_mutex_unlock(&gameBoardMutex);
+            ghostClock.restart();
+        }
+
+        if (ghosts[id].isFast && !ghosts[id].hasSpeedBoost && sem_trywait(&speedBoostSemaphore) == 0) {
+            ghosts[id].hasSpeedBoost = true;
+            ghosts[id].speedBoostClock.restart();
+            std::cout << "Ghost " << ghosts[id].name << " acquired a speed boost" << std::endl;
+        }
+
+        if (ghosts[id].hasSpeedBoost && ghosts[id].speedBoostClock.getElapsedTime().asSeconds() >= SPEED_BOOST_DURATION) {
+            ghosts[id].hasSpeedBoost = false;
+            sem_post(&speedBoostSemaphore);
+            std::cout << "Ghost " << ghosts[id].name << " released the speed boost" << std::endl;
+        }
+
+        usleep(100000); 
+    }
+
+    return nullptr;
+}
+
 int main() {
     initializeSemaphores();
     initializePacman();
