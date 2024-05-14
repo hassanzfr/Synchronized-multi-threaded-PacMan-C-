@@ -1,1 +1,1 @@
-# Synchronized-multi-threaded-PacMan-C-
+# Synchronized-multi-threaded-PacMan-C++
